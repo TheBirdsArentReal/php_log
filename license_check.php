@@ -1,7 +1,7 @@
 <?php 
 $logFile = 'access.log';
 $devicesBySerial = [];
-
+$gzipErrors = 0;
 
 if (file_exists($logFile)) {
     $handle = fopen($logFile, 'r');
@@ -27,9 +27,10 @@ if (file_exists($logFile)) {
              continue;
          }
 
-         $json = gzdecode($compressed);
+         $json = @gzdecode($compressed);
 
          if ($json === false) {
+             $gzipErrors++;
              continue;
          }
 
@@ -78,6 +79,7 @@ if (file_exists($logFile)) {
 
         $top10Violations = array_slice($violations, 0, 10, true);
 
+        echo "Gzip decode errors: $gzipErrors\n";
         echo "Top 10 Serial Numbers with Multiple Devices:\n";
         if(empty($top10Violations)) {
             echo "No violations found.\n";
