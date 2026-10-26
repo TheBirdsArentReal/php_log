@@ -1,28 +1,31 @@
 <?php
-/* open file fopen()
- extract serial numbers fgets() preg_match()
- count access $count[$serial]++
- sort result arsort() array slice()
- echo top 10
- fclose() */
 
-$logFile = 'serial_numbers.log';
-$counts = [];
+require_once 'common.php';
+$logFile = 'access.log';
+
 
 if (file_exists($logFile)) {
     $handle = fopen($logFile, 'r');
     if ($handle) {
-        while (($line = fgets($handle)) !== false) {
 
-        //extract serial number using regex and count occurrences
-            if (preg_match('/\bserial=([^\s]+)/', $line, $matches)) {
-                $serial = $matches[1];
-                if (!isset($counts[$serial])) {
-                    $counts[$serial] = 0;
-                }
-                $counts[$serial]++;
-            }
+       $accessCounts = [];
+       $totalLines = 0;
+       $missingSerial = 0;
+
+        while (($line = fgets($handle)) !== false) {
+      
+           $totalLines++;
+
+           // extract serial number
+           $serial = extractSerial($line);
+           if ($serial === null) {
+               $missingSerial++;
+               continue;
+           }
+
+           $accessCounts[$serial] = ($accessCounts[$serial] ?? 0) + 1;
         }
+
         fclose($handle);
     } else {
         echo "Error opening the file.";
@@ -31,12 +34,23 @@ if (file_exists($logFile)) {
     echo "Log file does not exist.";
 }
 
-// sort by descending order and get top 10
-arsort($counts);
-$topSerials = array_slice($counts, 0, 10, true);
+// sort by descending order
+arsort($accessCounts);
 
-//show results
-echo "Top 10 Serial Numbers:";
-foreach ($topSerials as $serial => $count) {
-    echo "$serial: $count";
+echo "Top 10 Serial Numbers:\n";
+
+$rank = 0;
+
+foreach ($accessCounts as $serial => $count) {
+    $rank++;
+    echo "$rank. $serial: $count\n";
+    if ($rank >= 10) {
+        break;
+    }
 }
+
+//show data summary
+echo "\nSummary:\n";
+echo "\nTotal lines processed: $totalLines\n"; 
+echo "Lines without serial numbers: $missingSerial\n";
+echo "Unique serial numbers found: " . count($accessCounts) . "\n";
