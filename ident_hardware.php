@@ -1,107 +1,96 @@
 <?php 
+
+require_once 'common.php';
+
 $logFile = 'access.log';
 $hardwareClasses = [];
-$gzipErrors = 0;
-$invalidEntries = 0;
+$stats = createErrorStats();
 
 if (file_exists($logFile)) {
     $handle = fopen($logFile, 'r');
     if ($handle) {
         while (($line = fgets($handle)) !== false) {
 
-        // get serial number
-        if (!preg_match('/\bserial=([^\s]+)/', $line, $serialMatch)) {
-                continue;
-                }
-
-        // extract, decode & unzip specs 
-        if (!preg_match('/\bspecs=([^\s]+)/', $line, $specsMatch)) {
-           $invalidEntries++;
-           continue;
+        $serial = extractSerial($line);
+        if ($serial === null) {
+            $stats['missing_serial']++;
+            continue;
+        }
+        
+        $encodedSpecs = extractEncodedSpecs($line);
+        if ($encodedSpecs === null) {
+            $stats['missing_specs']++;
+            continue;
         }
 
-         $serial = $serialMatch[1];
-         $encodedSpecs = $specsMatch[1];
+        $result = decodeSpecs($encodedSpecs);
+        reportStatus($stats, $result['status']);
 
-         $compressed = base64_decode($encodedSpecs, true);
+        if ($result['status'] !== 'success') {
+            continue;
+        }
 
-         if ($compressed === false) {
-             $invalidEntries++;
-             continue;
+        $specs = $result['data'];
+
+        $architecture = $specs['architecture'] ?? null;
+        $machine = $specs['machine'] ?? null;
+        $cpu = $specs['cpu'] ?? null;
+
+         // dont mix missing data 
+         if (
+            !is_string($architecture) || trim($architecture) === '' ||
+            !is_string($machine) || trim($machine) === '' ||
+            !is_string($cpu) || trim($cpu) === ''
+         ){
+            $stats['missing_hardware_fields']++;
+            continue;
          }
-
-         $json = @gzdecode($compressed);
-
-         if ($json === false) {
-            $gzipErrors++;
-             continue;
-         }
-
-        //parse json 
-        $specs = json_decode($json, true);
-
-         if(!is_array($specs)) {
-             $invalidEntries++;
-             continue;
-         }
-
-
-         // extract hardware classes from specs
-         $architecture = trim((string)($specs['architecture'] ?? 'unknown'));
-         $machine = trim((string)($specs['machine'] ?? 'unknown'));
-         $cpu = trim((string)($specs['cpu'] ?? 'unknown'));
-
-         //remove cpu whitespace and trailing slashes
-         $cpu = rtrim($cpu, "/\t"); 
-
-         // mark missing values as unknown
-            if ($architecture === '') {
-                $architecture = 'unknown';
-            }
-            if ($machine === '') {
-                $machine = 'unknown';       
-            }
-            if ($cpu === '') {
-                $cpu = 'unknown';
-            }
 
          // define hardware class
          $classKey = json_encode([$architecture, $machine, $cpu]);
 
-         $classLabel = "$architecture | $machine | $cpu";
-
-         if (!isset($hardwareClasses[$classKey])) {
-             $hardwareClasses[$classKey] = [
-                 'label' => $classLabel,
-                 'licenses' => []
-             ];
+         if($classKey === false) {
+            $stats['invalid_hardware_class']++;
+            continue;
          }
+
+        if (!isset($hardwareClasses[$classKey])) {
+            $hardwareClasses[$classKey] = [
+                'architecture' => $architecture,
+                'machine' => $machine,
+                'cpu' => $cpu,
+                'licenses' => [],
+            ];
+        }
 
          //count licenses by hardware class
         $hardwareClasses[$classKey]['licenses'][$serial] = true; 
         }
 
         fclose($handle);
-        
-        foreach ($hardwareClasses as &$class) {
-            $class['license_count'] = count($class['licenses']);
-        }
-        unset($class); // break the reference to avoid unexpected behavior
 
-        //sort hardware classes by license count in descending order
-        uasort($hardwareClasses, function ($a, $b) {
+        foreach($hardwareClasses as &$hardwareClass) {
+            $hardwareClass['license_count'] = count($hardwareClass['licenses']);
+            unset($hardwareClass['licenses']);
+        }
+        unset($hardwareClass);
+
+        usort($hardwareClasses, function($a, $b) {
             return $b['license_count'] <=> $a['license_count'];
         });
 
-        echo "count of unique hardware classes: " . count($hardwareClasses) . "\n";
-        echo "Hardware Classes and active License Counts:\n";
+        echo "\nHardware Classes by active License Count:\n";
+
+        $rank = 0;
+
         foreach ($hardwareClasses as $class) {
-            printf("%s: %d active licenses\n", $class['label'], $class['license_count']);
+            $rank++;
+            echo "$rank. Architecture: {$class['architecture']}, Machine: {$class['machine']}, CPU: {$class['cpu']}, Active Licenses: {$class['license_count']}\n";
         }
 
-        echo "\nCount of unique hardware classes: " . count($hardwareClasses) . "\n";
-        echo "Invalid entries: $invalidEntries\n";
-        echo "Gzip decode errors: $gzipErrors\n";
+        echo "\nFound " . count($hardwareClasses) . " unique hardware classes.\n";
+
+        printErrorStats($stats);
 
     } else {
         echo "Error opening the file.";
